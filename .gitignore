@@ -1,0 +1,5 @@
+node_modules/
+__pycache__/
+.score.json
+*.pyc
+.DS_Store

@@ -1,345 +1,379 @@
 ---
 name: kais-slideshow
 version: 1.0.0
-description: "通用轮播/幻灯片制作管线。触发词：slideshow、轮播、幻灯片、图文合集、小红书轮播、知识卡片、info-graphic、carousel、图文笔记。覆盖选题→调研→脚本→视觉→生成→合成的完整管线。"
+description: "通用 Slideshow 短视频生成器。从图片+文字快速生成带动效+BGM 的竖版/横版短视频。触发词：做slideshow、生成幻灯片视频、图片轮播视频、制作 slideshow、slideshow video、照片墙视频、图片加音乐、图片配乐、做照片视频、生成照片视频"
 ---
 
-# kais-slideshow — 通用轮播制作管线
+# kais-slideshow — 通用 Slideshow 短视频生成器
 
-## 触发词
-`slideshow`, `轮播`, `幻灯片`, `图文合集`, `小红书轮播`, `知识卡片`, `info-graphic`, `carousel`, `图文笔记`, `kais-slideshow`, `做轮播`, `做卡片`
+将一组图片 + 文字描述快速合成为带动效和背景音乐的短视频。
 
-## 定位
+## 快速使用
 
-将 kais-movie-agent 的核心流程（调研→创作→审核）泛化为**轻量级图文轮播管线**。适用于小红书轮播、知识卡片、教程合集、产品展示、信息图表等场景。
+用户提供图片（URL/本地/Notion）+ 文字 → 自动裁剪预览 → 用户选位置 → 动效合成 → BGM匹配 → 输出视频。
 
-与 kais-movie-agent 的区别：
+## 参数说明
 
-| | kais-movie-agent | kais-slideshow |
-|---|---|---|
-| 产出 | 视频（MP4） | 图片合集（PNG/PDF） |
-| 复杂度 | 8+ Phase | 5 Phase |
-| 视频生成 | Seedance/延长链 | ❌ 不需要 |
-| 配音 | TTS | ❌ 不需要 |
-| 后期合成 | FFmpeg 拼接+字幕 | 可选：PDF 合集 |
-| 适用场景 | AI 短片/短剧 | 轮播/卡片/信息图 |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| 分辨率 | 1080×1920 | 竖版。横版用 1920×1080 |
+| 帧率 | 30fps | 视频帧率 |
+| 每张时长 | 3.5s | 单张图片展示秒数 |
+| 过渡时长 | 0.5s | 图片间交叉淡入淡出 |
+| BGM | 自动匹配 | 通过 kais-bgm 智能选曲 |
 
-## 核心依赖
+## 核心流程
 
-| 依赖 | 用途 | 必需 |
-|------|------|------|
-| kais-jimeng | 图片生成 | ✅ |
-| deep-research | 品牌/选题调研 | 推荐 |
-| kais-audience | 受众预测试 | 推荐 |
-| Playwright | HTML→PNG 截图（文字卡片） | 可选 |
-| ffmpeg | 图片→视频轮播（可选） | 可选 |
+### 步骤 1：素材准备
 
-## 管线流程
+<!-- FREEDOM:high -->
+收集用户提供的素材：
 
-```
-Phase 1: 需求确认                              → 🔒 REVIEW GATE
-  ↓
-Phase 2: 调研与选题 (deep-research + kais-audience)  → checkpoint
-  └─ 2a: 深度调研（品牌/受众/竞品）             → 自动
-  └─ 2b: 选题投票筛选                           → 自动
-  ↓
-Phase 3: 脚本与分页设计                         → 🔒 REVIEW GATE
-  └─ 确定页数、每页内容、视觉风格
-  └─ 受众预测试（kais-audience 深度测评）        → 自动
-  ↓
-Phase 4: 视觉生成                               → 🔒 REVIEW GATE
-  └─ 4a: 风格锁定（mood board / 参考图）
-  └─ 4b: 逐页生成（文生图 / 图生图 / HTML卡片）
-  └─ 4c: 一致性检查（风格/字体/配色统一）
-  ↓
-Phase 5: 合成与交付                             → checkpoint
-  └─ PNG合集 / PDF / 可选转视频轮播
-```
+**支持的素材来源：**
+- **Notion 页面** — 读取页面内容，提取图片 URL
+- **图片 URL** — 直接下载
+- **本地文件** — 从用户发送的文件获取
+- **文字内容** — 每张图片对应的标题/描述
 
----
+**输出**：`/tmp/slideshow_<timestamp>/images/` 目录下所有图片 + 内容列表
+<!-- /FREEDOM:high -->
 
-## Phase 1: 需求确认
+### 步骤 2：图片裁剪预览（Human-in-the-loop）
 
-收集以下信息（缺失时追问一次后用默认值）：
+<!-- FREEDOM:low -->
+**必须生成裁剪预览让用户确认，不可自动裁剪。**
 
-| 参数 | 选项 | 默认 | 说明 |
-|------|------|------|------|
-| **主题** | 自由文本 | — | 轮播的主题/选题 |
-| **页数** | 3-20 | 6-8 | 轮播页数（小红书建议 6-9 页） |
-| **比例** | 3:4 / 9:16 / 16:9 / 1:1 | 3:4 | 小红书用 3:4，抖音用 9:16 |
-| **风格** | 见下方风格库 | auto | 视觉风格 |
-| **品牌植入** | 是/否 | 否 | 是否有品牌软广需求 |
-| **目标平台** | 小红书/抖音/B站/通用 | 小红书 | 影响尺寸和格式 |
-| **交付格式** | PNG / PDF / MP4 | PNG | 输出格式 |
+#### 为什么需要这一步？
+- 横版图裁到竖版（或反过来）时，重要内容可能被裁掉
+- 不同图片主体位置不同，无法自动判断最佳裁剪位置
+- 裁错一次 = 整个视频要重来
 
-**风格库**：
-- `minimal` — 极简白底，大字排版
-- `dark` — 暗色系，科技感
-- `warm` — 暖色调，情感类
-- `comic` — 漫画风，故事类
-- `infographic` — 信息图，数据类
-- `cinematic` — 电影感，氛围类
-- `handdrawn` — 手绘风，知识类
-- `auto` — 根据主题自动匹配
+#### 裁剪算法
+```python
+# PIL cover-fill + 居中裁剪（零变形）
+from PIL import Image
 
-**输出**：保存为 `PROJECT/requirement.json`
-
----
-
-## Phase 2: 调研与选题
-
-### Phase 2a: 深度调研（deep-research）
-
-**触发条件**：有品牌植入、真实人物/事件、特定行业时启用。
-
-调用 `deep-research` skill，调研维度：
-- 品牌/产品核心卖点
-- 目标受众画像
-- 同类爆款案例（截图+数据）
-- 平台热门选题趋势
-- 相关圈层文化/禁忌
-
-**输出**：`PROJECT/research/summary.json`
-
-### Phase 2b: 选题投票筛选（kais-audience）
-
-**触发条件**：调研产出 3+ 个选题方向时启用。
-
-调用 `kais-audience` 快速投票模式，12 人虚拟评审团排名。
-
-**输出**：`PROJECT/research/audience_vote.md`
-
----
-
-## Phase 3: 脚本与分页设计
-
-### 脚本结构
-
-```json
-{
-  "title": "轮播标题",
-  "subtitle": "副标题（可选）",
-  "style": "minimal",
-  "palette": ["#FFFFFF", "#333333", "#FF6B35"],
-  "font": "Noto Sans CJK SC",
-  "pages": [
-    {
-      "id": 1,
-      "type": "cover",
-      "title": "主标题",
-      "subtitle": "副标题",
-      "visual_prompt": "英文prompt（用于AI生成）",
-      "layout": "center",
-      "notes": "设计备注"
-    },
-    {
-      "id": 2,
-      "type": "content",
-      "title": "要点标题",
-      "body": "正文内容（支持 Markdown）",
-      "visual_prompt": "配图描述",
-      "visual_type": "ai_generated",
-      "layout": "top-image-bottom-text",
-      "highlight": "关键数据或金句"
-    },
-    {
-      "id": 3,
-      "type": "data",
-      "title": "数据页标题",
-      "data": [
-        {"label": "指标A", "value": "95%", "trend": "up"},
-        {"label": "指标B", "value": "3.2亿", "trend": "stable"}
-      ],
-      "visual_prompt": "数据可视化描述",
-      "layout": "big-number"
-    }
-  ]
-}
+def cover_crop(img_path, target_w, target_h, crop_ratio_h, crop_ratio_v=0.5):
+    """
+    crop_ratio_h: 0=far-L, 0.15=left, 0.35=center-L, 0.55=center-R, 0.75=far-R, 1.0=far-R
+    crop_ratio_v: 0.5=居中（默认）
+    """
+    img = Image.open(img_path).convert("RGB")
+    iw, ih = img.size
+    
+    # cover-fill: 确保填满目标尺寸
+    scale = max(target_w / iw, target_h / ih)
+    nw, nh = int(iw * scale), int(ih * scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    
+    # 计算裁剪偏移
+    max_x = max(0, nw - target_w)
+    max_y = max(0, nh - target_h)
+    x_off = int(crop_ratio_h * max_x)
+    y_off = int(crop_ratio_v * max_y)
+    
+    return img.crop((x_off, y_off, x_off + target_w, y_off + target_h))
 ```
 
-### 页面类型
+#### 生成预览条
+为每张图生成 5 个裁剪位置预览（far-L / left / center-L / center-R / far-R），拼成一张预览图发给用户选择。
 
-| type | 用途 | 布局建议 |
+```python
+# 预览条生成示例
+positions = [0, 0.15, 0.35, 0.55, 0.75]
+labels = ["far-L", "left", "center-L", "center-R", "far-R"]
+
+# 缩略图尺寸
+cw, ch = 200, 356  # 保持 720:1280 比例
+sheet = Image.new("RGB", (cw * 5 + 40, ch + 40), (40, 40, 40))
+
+for i, (pos, label) in enumerate(zip(positions, labels)):
+    cropped = cover_crop(img_path, W, H, pos)
+    thumb = cropped.resize((cw, ch), Image.LANCZOS)
+    sheet.paste(thumb, (i * (cw + 10), 25))
+```
+
+#### 交互流程
+1. 生成预览条 → 发送给用户
+2. 用户回复位置选择（如 `#2 left` 或直接 `center`）
+3. 记录每张图的裁剪位置到配置
+
+**裁剪位置映射：**
+| 用户选择 | crop_ratio_h |
+|---------|-------------|
+| far-L | 0 |
+| left | 0.15 |
+| center-L | 0.35 |
+| center-R | 0.55 |
+| far-R | 0.75 |
+<!-- /FREEDOM:low -->
+
+### 步骤 3：动效合成（MoviePy）
+
+<!-- FREEDOM:high -->
+用 MoviePy + PIL 实现多样化动效，**不要用 ffmpeg zoompan/crop**（会导致图片变形）。
+
+#### 可用动效
+| 效果 | 说明 | 适用场景 |
 |------|------|---------|
-| `cover` | 封面 | 全图+居中文字 / 纯文字大标题 |
-| `content` | 正文页 | 上图下文 / 左图右文 / 全文 |
-| `data` | 数据页 | 大数字 / 图表 / 对比 |
-| `quote` | 金句页 | 居中引用 / 人物+金句 |
-| `timeline` | 时间线 | 纵向时间轴 / 横向步骤 |
-| `comparison` | 对比页 | 左右分栏 / 表格 |
-| `summary` | 总结页 | 要点回顾 / CTA |
-| `end` | 尾页 | 关注引导 / 来源说明 |
+| zoom_in | 从 1.0x 缓慢放大到 1.15x | 车辆、产品特写 |
+| zoom_out | 从 1.15x 缓慢缩小到 1.0x | 建筑、风景 |
+| pan_left | 从右向左平移 | 时间线、叙事 |
+| pan_right | 从左向右平移 | 揭示、展开 |
+| pan_up | 从下向上平移 | 高楼、天空 |
+| pan_down | 从上向下平移 | 俯瞰、地图 |
+| ken_burns | 缩放+平移组合 | 经典纪录片 |
 
-### 受众预测试（自动）
+#### 动效实现（以 zoom_in 为例）
+```python
+import moviepy.editor as mpy
+from PIL import Image
 
-脚本完成后自动运行 `kais-audience` 深度测评：
-- 完播率预测（轮播 = 滑动完成率）
-- 毒点检测（信息过载/排版混乱/广告突兀）
-- 情绪曲线（每页的情绪标注）
+def make_zoom_clip(img_path, W, H, crop_ratio, duration, zoom_start=1.0, zoom_end=1.15):
+    img = Image.open(img_path).convert("RGB")
+    iw, ih = img.size
+    scale = max(W / iw, H / ih)
+    base_w, base_h = int(iw * scale), int(ih * scale)
+    
+    max_x = max(0, base_w - W)
+    max_y = max(0, base_h - H)
+    cx = int(crop_ratio * max_x)
+    cy = int(0.5 * max_y)
+    
+    def make_frame(t):
+        progress = t / duration
+        z = zoom_start + (zoom_end - zoom_start) * progress
+        fw = int(base_w / z)
+        fh = int(base_h / z)
+        fx = max(0, min(cx - (fw - W) // 2, base_w - fw))
+        fy = max(0, min(cy - (fh - H) // 2, base_h - fh))
+        resized = img.resize((fw, fh), Image.LANCZOS)
+        cropped = resized.crop((fx, fy, fx + W, fy + H))
+        if cropped.size != (W, H):
+            cropped = cropped.resize((W, H), Image.LANCZOS)
+        return np.array(cropped)
+    
+    clip = mpy.VideoClip(make_frame, duration=duration)
+    return clip
+```
 
-**输出**：`PROJECT/research/audience_test.md`
+#### 关键注意事项
+- **变形零容忍**：所有裁剪必须保持原始宽高比，用 `max(W/iw, H/ih)` 而非 `min`
+- **动效多样化**：不要所有图用同一个效果，交替使用不同动效
+- **帧率一致性**：所有 clip 统一 fps
+- **交叉淡入淡出**：用 `mpy.concatenate_videoclips` 或 `mpy.CompositeVideoClip`，每张最后 0.5s 与下一张开头 0.5s 叠加
+<!-- /FREEDOM:high -->
 
-**🔒 审核门**：将脚本摘要 + 测评结果展示给用户确认。
+### 步骤 4：文字叠加
 
----
+<!-- FREEDOM:high -->
+在每张图片下方叠加文字（标题、年份等）。
 
-## Phase 4: 视觉生成
+```python
+# 中文字体
+try:
+    font = ImageFont.truetype("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 48)
+except:
+    font = ImageFont.truetype("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 48)
 
-### Phase 4a: 风格锁定
+# 在 make_frame 中绘制文字
+from PIL import ImageDraw
+draw = ImageDraw.Draw(frame)
+# 半透明黑底
+draw.rectangle([(0, H - 120), (W, H)], fill=(0, 0, 0, 160))
+# 白色文字居中
+bbox = draw.textbbox((0, 0), text, font=font)
+tw = bbox[2] - bbox[0]
+draw.text(((W - tw) // 2, H - 100), text, fill=(255, 255, 255), font=font)
+```
 
-生成 2-3 张参考图（mood board），锁定：
-- 配色方案（主色 + 辅色 + 强调色）
-- 字体风格
-- 图片风格（写实/插画/扁平/手绘）
-- 排版规范（间距/字号/对齐）
+**注意**：必须使用支持中文的字体，否则会显示方框。备选：`wqy-zenhei`、`NotoSansCJK`、`AR PL UKai CN`。
+<!-- /FREEDOM:high -->
 
-**输出**：`PROJECT/assets/style_ref_*.png` + `PROJECT/style_guide.json`
+### 步骤 5：BGM 匹配（kais-bgm）
 
-### Phase 4b: 逐页生成
+<!-- FREEDOM:high -->
+调用 kais-bgm skill 自动匹配背景音乐。
 
-根据 `visual_type` 选择生成方式：
-
-| visual_type | 方式 | 工具 |
-|-------------|------|------|
-| `ai_generated` | AI 生成配图 | kais-jimeng 文生图 |
-| `ai_stylized` | 图生图风格化 | kais-jimeng + 参考图 |
-| `html_card` | HTML 模板渲染 | Playwright 截图 |
-| `photo` | 实拍/素材图 | 用户提供的图片 |
-| `none` | 纯文字排版 | HTML 模板渲染 |
-
-**AI 生成参数**：
 ```bash
-# 基础生成
-curl -s http://localhost:8000/v1/images/generations \
-  -H "Authorization: Bearer $SESSION_ID" \
-  -d '{"model":"jimeng-5.0","prompt":"<visual_prompt>","ratio":"3:4","resolution":"2k"}'
-
-# 基于风格参考图生成（保持一致性）
-curl -s http://localhost:8000/v1/images/generations \
-  -d '{"model":"jimeng-5.0","prompt":"<visual_prompt>","images":["<style_ref_url>"],"sample_strength":0.3,"ratio":"3:4"}'
+cd ~/.openclaw/workspace/skills/kais-bgm
+node -e "
+import { selectBGM } from './lib/bgm-selector.js';
+import { readFileSync } from 'node:fs';
+const lib = JSON.parse(readFileSync('./lib/bgm-library.json'));
+const results = selectBGM('<场景描述>', '<情感标签>', lib, { topN: 3, minDuration: 15, maxDuration: 60 });
+for (const r of results) {
+  console.log('[' + r.score + '分]', r.filename, '| 时长:', r.duration.toFixed(1) + 's');
+  console.log(r.path);
+}
+"
 ```
 
-**HTML 卡片模板**（文字/数据密集型页面）：
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { margin: 0; width: 1080px; height: 1440px; font-family: 'Noto Sans CJK SC'; background: #FFF; }
-    .container { padding: 80px; display: flex; flex-direction: column; justify-content: center; }
-    h1 { font-size: 72px; color: #333; margin-bottom: 40px; }
-    .highlight { font-size: 120px; color: #FF6B35; font-weight: bold; }
-  </style>
-</head>
-<body><div class="container">
-  <h1>{{title}}</h1>
-  <div class="highlight">{{highlight}}</div>
-</div></body>
-</html>
-```
-
-### Phase 4c: 一致性检查
-
-检查清单：
-- [ ] 配色统一（所有页面使用同一 palette）
-- [ ] 字体统一（标题/正文字号一致）
-- [ ] 风格统一（AI 生成图风格一致）
-- [ ] 信息完整（无遗漏页面）
-- [ ] 排版质量（无溢出/错位）
-
-**🔒 审核门**：发送所有页面给用户审核。
-
----
-
-## Phase 5: 合成与交付
-
-### 输出格式
-
-**PNG 合集**（默认）：
+用户试听选定后，用 ffmpeg 混合：
 ```bash
-# 所有页面保存到 PROJECT/output/page_01.png ~ page_NN.png
+ffmpeg -y -i video_no_audio.mp4 -i bgm.mp3 \
+  -filter_complex "[1:a]afade=t=in:st=0:d=1,afade=t=out:st=19:d=1,atrim=0:20[bgm]" \
+  -map 0:v -map "[bgm]" -c:v copy -c:a aac -b:a 192k output.mp4
+```
+<!-- /FREEDOM:high -->
+
+### 步骤 6：输出与交付
+
+<!-- FREEDOM:high -->
+最终视频通过 message tool 以 document 形式发送给用户。
+
+**输出规范：**
+- 格式：MP4 (H.264 + AAC)
+- 默认分辨率：1080×1920（竖版）
+- 文件命名：`output/slideshow_<描述>.mp4`
+<!-- /FREEDOM:high -->
+
+## 完整脚本模板
+
+```python
+#!/usr/bin/env python3
+"""kais-slideshow: 通用 Slideshow 短视频生成器"""
+import os, json, sys
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+import moviepy.editor as mpy
+
+# === 配置 ===
+W, H = 1080, 1920  # 竖版；横版改为 1920, 1080
+FPS = 30
+FONT_PATH = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+WORK_DIR = "/tmp/slideshow"  # 工作目录
+
+# === 素材配置（根据实际内容填写）===
+SLIDES = [
+    {"img": "images/1.jpg",  "text": "标题1", "dur": 3.5, "effect": "zoom_in",  "crop_h": 0.35},
+    {"img": "images/2.jpg",  "text": "标题2", "dur": 3.5, "effect": "pan_right", "crop_h": 0.55},
+    # ... 更多图片
+]
+CLOSING_IMG = "images/closing.jpg"  # 可选收尾图
+
+# === 裁剪函数 ===
+def cover_crop(img_path, tw, th, crop_h=0.5, crop_v=0.5):
+    img = Image.open(img_path).convert("RGB")
+    iw, ih = img.size
+    scale = max(tw / iw, th / ih)
+    nw, nh = int(iw * scale), int(ih * scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    mx, my = max(0, nw - tw), max(0, nh - th)
+    return img.crop((int(crop_h * mx), int(crop_v * my), int(crop_h * mx) + tw, int(crop_v * my) + th))
+
+# === 动效函数 ===
+def make_clip(slide, font):
+    img = Image.open(os.path.join(WORK_DIR, slide["img"])).convert("RGB")
+    iw, ih = img.size
+    scale = max(W / iw, H / ih)
+    bw, bh = int(iw * scale), int(ih * scale)
+    mx, my = max(0, bw - W), max(0, bh - H)
+    cx, cy = int(slide["crop_h"] * mx), int(0.5 * my)
+    dur = slide["dur"]
+    effect = slide["effect"]
+    text = slide["text"]
+    
+    def make_frame(t):
+        p = t / dur
+        if effect == "zoom_in":
+            z = 1.0 + 0.15 * p
+        elif effect == "zoom_out":
+            z = 1.15 - 0.15 * p
+        elif effect == "pan_left":
+            z = 1.1
+            cx = mx * (1 - p)
+        elif effect == "pan_right":
+            z = 1.1
+            cx = mx * p
+        elif effect == "pan_up":
+            z = 1.1
+            cy = my * (1 - p)
+        elif effect == "pan_down":
+            z = 1.1
+            cy = my * p
+        else:
+            z = 1.0 + 0.1 * p
+        
+        fw, fh = int(bw / z), int(bh / z)
+        fx = max(0, min(cx - (fw - W) // 2, bw - fw))
+        fy = max(0, min(cy - (fh - H) // 2, bh - fh))
+        frame = img.resize((fw, fh), Image.LANCZOS).crop((fx, fy, fx + W, fy + H))
+        if frame.size != (W, H):
+            frame = frame.resize((W, H), Image.LANCZOS)
+        
+        # 文字叠加
+        draw = ImageDraw.Draw(frame)
+        # 半透明黑底
+        draw.rectangle([(0, H - 140), (W, H)], fill=(0, 0, 0, 160))
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        draw.text(((W - tw) // 2, H - 110), text, fill=(255, 255, 255), font=font)
+        return np.array(frame)
+    
+    return mpy.VideoClip(make_frame, duration=dur).set_fps(FPS)
+
+# === 主流程 ===
+def main():
+    os.makedirs(os.path.join(WORK_DIR, "output"), exist_ok=True)
+    font = ImageFont.truetype(FONT_PATH, 48)
+    
+    # 生成所有 clip
+    clips = []
+    for slide in SLIDES:
+        print(f"处理: {slide['text']} ({slide['effect']})")
+        clips.append(make_clip(slide, font))
+    
+    # 收尾图（如有）
+    if CLOSING_IMG and os.path.exists(os.path.join(WORK_DIR, CLOSING_IMG)):
+        clips.append(make_clip({"img": CLOSING_IMG, "text": "", "dur": 3.0, "effect": "zoom_in", "crop_h": 0.5}, font))
+    
+    # 交叉淡入淡出拼接
+    cross_dur = 0.5
+    final = mpy.concatenate_videoclips(clips, method="compose", padding=-cross_dur)
+    
+    # 输出
+    out_path = os.path.join(WORK_DIR, "output/slideshow.mp4")
+    final.write_videofile(out_path, fps=FPS, codec="libx264", audio=False)
+    print(f"输出: {out_path}")
+
+if __name__ == "__main__":
+    main()
 ```
 
-**PDF 合集**：
-```bash
-ffmpeg -framerate 1 -i output/page_%02d.png -c:v pdf output/slideshow.pdf
-# 或
-convert output/page_*.png output/slideshow.pdf
-```
+## 教训与最佳实践（来自实际项目）
 
-**视频轮播**（可选，每页 3-5 秒自动播放）：
-```bash
-# 每页 5 秒，加淡入淡出转场
-ffmpeg -framerate 1/5 -i output/page_%02d.png \
-  -vf "fps=30,format=yuv420p" \
-  -c:v libx264 -pix_fmt yuv420p \
-  -t $(ls output/*.png | wc -l | xargs -I{} echo "{} * 5" | bc) \
-  output/slideshow.mp4
-```
+### ❌ 不要做的事
+1. **不要用 ffmpeg zoompan/crop 做动效** — 多次尝试均导致图片横向压扁
+2. **不要用 `min(W/iw, H/ih)` 做缩放** — 会导致黑边或变形，必须用 `max`
+3. **不要跳过裁剪预览** — 一次裁错就要整条重来
+4. **不要用不支持中文的默认字体** — 会显示方框
 
-**输出目录**：
-```
-PROJECT/
-├── requirement.json
-├── script.json
-├── style_guide.json
-├── research/
-├── assets/          # AI 生成图、参考图
-├── templates/       # HTML 模板
-├── output/          # 最终产出
-│   ├── page_01.png
-│   ├── page_02.png
-│   └── ...
-└── slideshow.pdf    # 或 .mp4
-```
+### ✅ 推荐做法
+1. **PIL cover-fill + 居中裁剪** — 保证零变形
+2. **每张图生成预览条** — 5个位置让用户选
+3. **动效多样化** — 交替使用 zoom/pan/ken_burns
+4. **BGM 淡入淡出** — 首尾各 1s，避免突兀
+5. **先用低分辨率测试** — 720p 确认无误后再升 1080p
 
----
+## 依赖
 
-## 审核门规范
+| 工具 | 用途 | 安装 |
+|------|------|------|
+| Pillow | 图片裁剪、文字绘制 | `pip install Pillow` |
+| MoviePy | 视频合成 | `pip install moviepy` |
+| numpy | 帧数组 | `pip install numpy` |
+| ffmpeg | 编码输出 | 系统包 |
+| kais-bgm | BGM 匹配 | 本地 skill |
+| kais-search | 图片搜索 | 本地 skill |
 
-| Phase | 审核内容 | 展示方式 |
-|-------|---------|---------|
-| Phase 1 | 需求参数确认 | 文字摘要 |
-| Phase 3 | 脚本 + 受众测评结果 | 文字 + 关键数据 |
-| Phase 4 | 所有页面预览 | 发送图片合集 |
-
-**规则**：
-1. 到达审核门必须暂停
-2. 用户回复"通过"后继续
-3. 用户要求修改则回滚到对应 Phase
-
----
-
-## Git 版本管理
-
-复用 kais-movie-agent 的 `git-stage-manager.js`：
-
-| Stage | Phase | 产出 |
-|-------|-------|------|
-| `requirement` | 1 | requirement.json |
-| `research` | 2 | research/*.json |
-| `script` | 3 | script.json, style_guide.json |
-| `visuals` | 4 | assets/*, output/* |
-| `delivery` | 5 | slideshow.pdf/mp4 |
-
----
-
-## 快速示例
+## 文件结构
 
 ```
-用户: "帮我做一个小红书轮播，主题是 5 个提升专注力的方法"
-→ Phase 1: 确认（3:4, 6页, minimal风格）
-→ Phase 2: 调研热门专注力内容 + 受众投票
-→ Phase 3: 生成脚本（封面+5个方法+尾页）
-→ Phase 4: AI 生成配图 + HTML 排版文字页
-→ Phase 5: 输出 7 张 PNG
-```
-
-```
-用户: "给张雪机车做一个产品展示轮播，9页"
-→ Phase 1: 确认（3:4, 9页, cinematic风格, 品牌植入）
-→ Phase 2: deep-research 张雪品牌 + 受众测试
-→ Phase 3: 脚本（品牌故事+产品卖点+用户口碑+CTA）
-→ Phase 4: AI 生成场景图 + 数据页
-→ Phase 5: 输出 9 张 PNG
+kais-slideshow/
+├── SKILL.md              # 本文件
+├── scripts/
+│   └── generate.py       # 生成脚本模板
+└── references/
+    └── volvo99-case.md   # 沃尔沃99周年案例复盘
 ```
